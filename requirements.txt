@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+notion-client
+openai
+twilio
+python-multipart
