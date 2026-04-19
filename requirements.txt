@@ -1,6 +1,6 @@
 fastapi
 uvicorn
 notion-client
-openai
+anthropic
 twilio
 python-multipart
