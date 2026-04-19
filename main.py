@@ -14,23 +14,29 @@ claude_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 DB_HISTORY_ID = os.getenv("DATABASE_ID_HISTORY")
 
 def get_notion_context():
-    """Récupère l'historique des repas dans Notion."""
+    """Récupère l'historique des repas dans Notion avec la syntaxe correcte."""
     try:
+        # Correction de la syntaxe pour les versions récentes du SDK
         response = notion.databases.query(
-            database_id=DB_HISTORY_ID,
-            page_size=10,
-            sorts=[{"property": "Date", "direction": "descending"}]
+            **{
+                "database_id": DB_HISTORY_ID,
+                "page_size": 10,
+                "sorts": [{"property": "Date", "direction": "descending"}]
+            }
         )
+        
         meals = []
-        for row in response["results"]:
-            # On suppose que votre colonne s'appelle 'Nom'
-            props = row["properties"].get("Nom", {}).get("title", [])
-            if props:
-                meals.append(props[0]["plain_text"])
+        for row in response.get("results", []):
+            # Sécurité supplémentaire pour accéder aux propriétés
+            properties = row.get("properties", {})
+            name_prop = properties.get("Nom", {}).get("title", [])
+            if name_prop:
+                meals.append(name_prop[0]["plain_text"])
+                
         return ", ".join(meals) if meals else "Aucun historique trouvé."
     except Exception as e:
-        print(f"Erreur Notion: {e}")
-        return "Erreur lors de la récupération de l'historique."
+        print(f"Erreur détaillée Notion: {str(e)}")
+        return f"Erreur technique lors de la récupération."
 
 @app.post("/whatsapp")
 async def whatsapp_reply(Body: str = Form(...)):
