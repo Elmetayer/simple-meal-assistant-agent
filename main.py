@@ -1,54 +1,65 @@
 import os
-from fastapi import FastAPI, Form, Request
+from fastapi import FastAPI, Form
 from notion_client import Client
-from openai import OpenAI
+import anthropic
 from twilio.twiml.messaging_response import MessagingResponse
 
 app = FastAPI()
 
 # Initialisation des clients
 notion = Client(auth=os.getenv("NOTION_TOKEN"))
-ai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# Utilisation du SDK Anthropic
+claude_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
 DB_HISTORY_ID = os.getenv("DATABASE_ID_HISTORY")
 
 def get_notion_context():
-    """Récupère les 10 derniers dîners pour la fenêtre de contexte."""
-    response = notion.databases.query(
-        database_id=DB_HISTORY_ID,
-        page_size=10,
-        sorts=[{"property": "Date", "direction": "descending"}]
-    )
-    # Parsing simplifié des résultats (à adapter selon vos colonnes)
-    meals = []
-    for row in response["results"]:
-        name = row["properties"]["Nom"]["title"][0]["plain_text"]
-        meals.append(name)
-    return ", ".join(meals)
+    """Récupère l'historique des repas dans Notion."""
+    try:
+        response = notion.databases.query(
+            database_id=DB_HISTORY_ID,
+            page_size=10,
+            sorts=[{"property": "Date", "direction": "descending"}]
+        )
+        meals = []
+        for row in response["results"]:
+            # On suppose que votre colonne s'appelle 'Nom'
+            props = row["properties"].get("Nom", {}).get("title", [])
+            if props:
+                meals.append(props[0]["plain_text"])
+        return ", ".join(meals) if meals else "Aucun historique trouvé."
+    except Exception as e:
+        print(f"Erreur Notion: {e}")
+        return "Erreur lors de la récupération de l'historique."
 
 @app.post("/whatsapp")
 async def whatsapp_reply(Body: str = Form(...)):
     user_msg = Body.lower()
     
-    # 1. Extraction du contexte de l'historique Notion
+    # 1. Extraction du contexte
     past_meals = get_notion_context()
     
-    # 2. Génération de la réponse avec l'IA
-    system_prompt = f"""
-    Tu es un assistant familial. Voici les derniers repas consommés : {past_meals}.
-    Propose des idées variées en évitant les répétitions. 
-    Sois concis, réponds sur un ton amical pour un groupe WhatsApp.
+    # 2. Génération avec Claude 3.5 Sonnet
+    # Le 'system prompt' est passé en paramètre séparé chez Anthropic
+    system_msg = f"""
+    Tu es un assistant familial expert en planification de repas. 
+    Historique des 10 derniers repas : {past_meals}.
+    Instructions : Propose des idées variées, évite les répétitions. 
+    Réponds de manière chaleureuse et concise pour WhatsApp.
     """
     
-    completion = ai_client.chat.completions.create(
-        model="gpt-4o",
+    message = claude_client.messages.create(
+        model="claude-3-5-sonnet-20240620",
+        max_tokens=1024,
+        system=system_msg,
         messages=[
-            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_msg}
         ]
     )
-    ai_response = completion.choices[0].message.content
+    
+    ai_response = message.content[0].text
 
-    # 3. Réponse formatée pour WhatsApp (TwiML)
+    # 3. Retour vers WhatsApp via Twilio
     resp = MessagingResponse()
     resp.message(ai_response)
     return str(resp)
